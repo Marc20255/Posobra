@@ -50,7 +50,7 @@ export function TechnicianRecommendations({
     return (
       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
         <p className="text-sm text-yellow-800">
-          Nenhum técnico encontrado para a categoria "{category}". Tente outra categoria.
+          Nenhum técnico encontrado para a categoria &quot;{category}&quot;. Tente outra categoria.
         </p>
       </div>
     )

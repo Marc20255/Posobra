@@ -45,11 +45,11 @@ export default function TechniciansPage() {
   const technicians = techniciansData?.data || []
 
   // Extrair todas as categorias únicas dos técnicos
-  const allCategories = Array.from(
+  const allCategories: string[] = Array.from(
     new Set(
-      technicians.flatMap((t: any) => t.categories || [])
+      technicians.flatMap((t: any) => (t.categories || []) as string[])
     )
-  ).sort()
+  ).sort() as string[]
 
   const handleCategoryFilter = (category: string | null) => {
     setSelectedCategory(category)
@@ -96,7 +96,7 @@ export default function TechniciansPage() {
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-sm font-medium text-gray-700">Filtrar por especialidade:</span>
               <Button
-                variant={selectedCategory === null ? 'default' : 'outline'}
+                variant={selectedCategory === null ? 'primary' : 'outline'}
                 size="sm"
                 onClick={() => handleCategoryFilter(null)}
                 className="text-sm"
@@ -106,7 +106,7 @@ export default function TechniciansPage() {
               {allCategories.map((category) => (
                 <Button
                   key={category}
-                  variant={selectedCategory === category ? 'default' : 'outline'}
+                  variant={selectedCategory === category ? 'primary' : 'outline'}
                   size="sm"
                   onClick={() => handleCategoryFilter(category)}
                   className="text-sm"

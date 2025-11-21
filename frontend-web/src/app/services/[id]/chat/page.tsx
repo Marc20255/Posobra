@@ -82,8 +82,38 @@ export default function ServiceChatPage() {
     retry: 1,
   })
 
+  // Send message mutation (must be before conditional returns)
+  const sendMessageMutation = useMutation({
+    mutationFn: async (messageText: string) => {
+      const response = await api.post(`/chat/service/${serviceId}`, {
+        message: messageText,
+        message_type: 'text',
+      })
+      return response.data
+    },
+    onSuccess: () => {
+      setMessage('')
+      queryClient.invalidateQueries({ queryKey: ['chat-messages', serviceId] })
+    },
+    onError: (error: any) => {
+      toastService.error(error.response?.data?.message || 'Erro ao enviar mensagem')
+    },
+  })
+
   const messages = messagesData?.data || []
   const service = serviceData?.data
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!message.trim() || sendMessageMutation.isPending) return
+
+    sendMessageMutation.mutate(message.trim())
+  }
 
   // Show error if service or messages fail to load
   if (serviceError || messagesError) {
@@ -115,36 +145,6 @@ export default function ServiceChatPage() {
       </div>
     )
   }
-
-  // Send message mutation
-  const sendMessageMutation = useMutation({
-    mutationFn: async (messageText: string) => {
-      const response = await api.post(`/chat/service/${serviceId}`, {
-        message: messageText,
-        message_type: 'text',
-      })
-      return response.data
-    },
-    onSuccess: () => {
-      setMessage('')
-      queryClient.invalidateQueries({ queryKey: ['chat-messages', serviceId] })
-    },
-    onError: (error: any) => {
-      toastService.error(error.response?.data?.message || 'Erro ao enviar mensagem')
-    },
-  })
-
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!message.trim() || sendMessageMutation.isPending) return
-
-    sendMessageMutation.mutate(message.trim())
-  }
-
-  // Scroll to bottom when messages change
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
 
   if (!user) {
     return (
