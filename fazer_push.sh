@@ -1,0 +1,13 @@
+#!/bin/bash
+echo "🚀 Preparando para fazer push..."
+echo ""
+echo "Opção 1: GitHub Desktop (Recomendado)"
+echo "1. Abra o GitHub Desktop"
+echo "2. File → Add Local Repository"
+echo "3. Selecione: $(pwd)"
+echo "4. Clique em 'Publish repository'"
+echo ""
+echo "Opção 2: Terminal (se já autenticou)"
+echo "Execute: git push -u origin main"
+echo ""
+echo "📖 Veja USAR_GITHUB_DESKTOP.md para instruções detalhadas"
