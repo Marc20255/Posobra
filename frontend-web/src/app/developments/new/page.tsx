@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { authService } from '@/lib/auth'
 import api from '@/lib/api'
 import { useQueryClient } from '@tanstack/react-query'
+import { logger } from '@/lib/logger'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 
 const developmentSchema = z.object({
@@ -53,6 +54,7 @@ export default function NewDevelopmentPage() {
     formState: { errors },
   } = useForm<DevelopmentForm>({
     resolver: zodResolver(developmentSchema),
+    mode: 'onBlur', // Validação em tempo real ao perder foco
     defaultValues: {
       state: 'RO',
       total_units: 0,
@@ -99,7 +101,7 @@ export default function NewDevelopmentPage() {
         setError('CEP não encontrado. Por favor, preencha os dados manualmente.')
       }
     } catch (err) {
-      console.error('Erro ao buscar CEP:', err)
+      logger.error('Erro ao buscar CEP:', err)
     } finally {
       setLoadingCep(false)
     }

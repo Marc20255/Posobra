@@ -11,6 +11,7 @@ import { authService } from '@/lib/auth'
 import api from '@/lib/api'
 import { useQuery } from '@tanstack/react-query'
 import { toastService } from '@/lib/toast'
+import { logger } from '@/lib/logger'
 import { ArrowLeft, Loader2, Camera, X } from 'lucide-react'
 import Image from 'next/image'
 import { TechnicianRecommendations } from '@/components/recommendations/TechnicianRecommendations'
@@ -72,6 +73,7 @@ export default function NewServicePage() {
     formState: { errors },
   } = useForm<ServiceForm>({
     resolver: zodResolver(serviceSchema),
+    mode: 'onBlur', // Validação em tempo real ao perder foco
     defaultValues: {
       priority: 'medium',
       state: 'RO',
@@ -126,7 +128,7 @@ export default function NewServicePage() {
         setValue('state', '', { shouldValidate: false })
       }
     } catch (err) {
-      console.error('Erro ao buscar CEP:', err)
+      logger.error('Erro ao buscar CEP:', err)
       setError('Erro ao buscar CEP. Por favor, preencha os dados manualmente.')
     } finally {
       setLoadingCep(false)

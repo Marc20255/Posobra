@@ -1,4 +1,6 @@
 import axios from 'axios'
+import { toastService } from './toast'
+import { logger } from './logger'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
 
@@ -26,7 +28,7 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     // Log error for debugging
-    console.error('API Error:', {
+    logger.error('API Error:', {
       url: error.config?.url,
       status: error.response?.status,
       message: error.response?.data?.message,
@@ -37,9 +39,9 @@ api.interceptors.response.use(
 
     // Network error - servidor não está respondendo
     if (error.code === 'ECONNREFUSED' || error.message === 'Network Error' || !error.response) {
-      console.error('Erro de conexão: Servidor backend não está respondendo')
+      logger.error('Erro de conexão: Servidor backend não está respondendo')
       if (typeof window !== 'undefined') {
-        alert('Erro de conexão: O servidor backend não está respondendo. Verifique se o servidor está rodando na porta 3001.')
+        toastService.error('Erro de conexão: O servidor backend não está respondendo. Verifique se o servidor está rodando na porta 3001.')
       }
     }
 
@@ -47,6 +49,7 @@ api.interceptors.response.use(
       if (typeof window !== 'undefined') {
         localStorage.removeItem('token')
         localStorage.removeItem('user')
+        // Não mostrar toast aqui pois será redirecionado
         window.location.href = '/login'
       }
     }

@@ -2,6 +2,7 @@
 
 import { Facebook, Twitter, Linkedin, Link2, Copy } from 'lucide-react'
 import { useState } from 'react'
+import { logger } from '@/lib/logger'
 
 interface ShareButtonsProps {
   url: string
@@ -45,7 +46,7 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (err) {
-      console.error('Erro ao copiar:', err)
+      logger.error('Erro ao copiar:', err)
     }
   }
 

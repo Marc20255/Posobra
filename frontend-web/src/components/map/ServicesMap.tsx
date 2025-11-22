@@ -6,6 +6,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Navigation, MapPin, Route, Zap } from 'lucide-react'
 import api from '@/lib/api'
+import { logger } from '@/lib/logger'
 
 // Fix para ícones padrão do Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl
@@ -112,7 +113,7 @@ export function ServicesMap({ services, center, zoom = 13, showRouteOptimization
                   serviceIds: [service.id]
                 })
               } catch (e) {
-                console.error('Erro ao salvar coordenadas:', e)
+                logger.error('Erro ao salvar coordenadas:', e)
                 // Continuar mesmo se falhar ao salvar, usar coordenadas localmente
               }
 
@@ -125,13 +126,13 @@ export function ServicesMap({ services, center, zoom = 13, showRouteOptimization
               // Atualizar estado incrementalmente para mostrar progresso
               setServicesWithCoords([...servicesWithExistingCoords, ...geocodedServices])
             } else {
-              console.warn(`Coordenadas inválidas para serviço ${service.id}: lat=${lat}, lng=${lng}`)
+              logger.warn(`Coordenadas inválidas para serviço ${service.id}: lat=${lat}, lng=${lng}`)
             }
           } else {
-            console.warn(`Nenhum resultado de geocoding para serviço ${service.id}: ${address}`)
+            logger.warn(`Nenhum resultado de geocoding para serviço ${service.id}: ${address}`)
           }
         } catch (error) {
-          console.error(`Erro ao geocodificar serviço ${service.id}:`, error)
+          logger.error(`Erro ao geocodificar serviço ${service.id}:`, error)
         }
       }
 

@@ -8,14 +8,16 @@ import { authService } from '@/lib/auth'
 import api from '@/lib/api'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toastService } from '@/lib/toast'
+import { logger } from '@/lib/logger'
 import { ArrowLeft, Send, Loader2 } from 'lucide-react'
 import { io, Socket } from 'socket.io-client'
+import type { User } from '@/types/user'
 
 export default function ServiceChatPage() {
   const router = useRouter()
   const params = useParams()
   const queryClient = useQueryClient()
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
   const [message, setMessage] = useState('')
   const [socket, setSocket] = useState<Socket | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -39,7 +41,7 @@ export default function ServiceChatPage() {
     })
 
     newSocket.on('connect', () => {
-      console.log('Conectado ao chat')
+      logger.log('Conectado ao chat')
       newSocket.emit('join-room', `service-${serviceId}`)
     })
 
@@ -49,7 +51,7 @@ export default function ServiceChatPage() {
     })
 
     newSocket.on('disconnect', () => {
-      console.log('Desconectado do chat')
+      logger.log('Desconectado do chat')
     })
 
     setSocket(newSocket)

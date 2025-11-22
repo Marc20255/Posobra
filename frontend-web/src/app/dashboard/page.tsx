@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,9 @@ import { CategoryChart } from '@/components/charts/CategoryChart'
 import { PriorityChart } from '@/components/charts/PriorityChart'
 import { BadgeDisplay } from '@/components/badges/BadgeDisplay'
 import dynamic from 'next/dynamic'
+import type { User } from '@/types/user'
+import type { Service } from '@/types/service'
+import { ApiResponse } from '@/types/api'
 
 // Importar mapa dinamicamente para evitar problemas de SSR
 const ServicesMap = dynamic(
@@ -40,7 +43,7 @@ import {
 
 export default function DashboardPage() {
   const router = useRouter()
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
 
   useEffect(() => {
     if (!authService.isAuthenticated()) {
@@ -57,7 +60,8 @@ export default function DashboardPage() {
       return response.data
     },
     enabled: !!user,
-    refetchInterval: 5000, // Refetch a cada 5 segundos para pegar coordenadas atualizadas
+    refetchInterval: 30000, // Refetch a cada 30 segundos (otimizado de 5s)
+    staleTime: 10000, // Considerar dados frescos por 10 segundos
   })
 
   const { data: unitsData } = useQuery({
@@ -80,23 +84,25 @@ export default function DashboardPage() {
 
   const hasUnits = unitsData?.data && unitsData.data.length > 0
 
-  const services = servicesData?.data || []
-  const stats = {
+  const services: Service[] = servicesData?.data || []
+  
+  // Memoizar cálculos pesados
+  const stats = useMemo(() => ({
     total: services.length,
-    pending: services.filter((s: any) => s.status === 'pending').length,
-    inProgress: services.filter((s: any) => s.status === 'in_progress').length,
-    completed: services.filter((s: any) => s.status === 'completed').length,
-  }
+    pending: services.filter((s) => s.status === 'pending').length,
+    inProgress: services.filter((s) => s.status === 'in_progress').length,
+    completed: services.filter((s) => s.status === 'completed').length,
+  }), [services])
 
-  // Preparar dados para gráficos
-  const statusChartData = [
+  // Preparar dados para gráficos (memoizados)
+  const statusChartData = useMemo(() => [
     { name: 'Pendentes', value: stats.pending, color: '#eab308' },
     { name: 'Em Andamento', value: stats.inProgress, color: '#3b82f6' },
     { name: 'Concluídos', value: stats.completed, color: '#10b981' },
-  ].filter(item => item.value > 0)
+  ].filter(item => item.value > 0), [stats])
 
-  // Dados de tendência (últimos 7 dias)
-  const getTrendData = () => {
+  // Dados de tendência (últimos 7 dias) - memoizado
+  const trendData = useMemo(() => {
     const last7Days = Array.from({ length: 7 }, (_, i) => {
       const date = new Date()
       date.setDate(date.getDate() - (6 - i))
@@ -104,10 +110,10 @@ export default function DashboardPage() {
     })
 
     return last7Days.map(date => {
-      const criados = services.filter((s: any) => 
+      const criados = services.filter((s) => 
         s.created_at?.startsWith(date)
       ).length
-      const concluidos = services.filter((s: any) => 
+      const concluidos = services.filter((s) => 
         s.completed_date?.startsWith(date)
       ).length
       
@@ -117,29 +123,29 @@ export default function DashboardPage() {
         concluidos
       }
     })
-  }
+  }, [services])
 
-  // Dados por categoria
-  const categoryData = Object.entries(
-    services.reduce((acc: any, s: any) => {
+  // Dados por categoria - memoizado
+  const categoryData = useMemo(() => Object.entries(
+    services.reduce((acc: Record<string, number>, s) => {
       acc[s.category] = (acc[s.category] || 0) + 1
       return acc
     }, {})
   ).map(([category, count]) => ({
     category,
     count: count as number
-  })).sort((a, b) => b.count - a.count).slice(0, 5)
+  })).sort((a, b) => b.count - a.count).slice(0, 5), [services])
 
-  // Dados por prioridade
-  const priorityData = Object.entries(
-    services.reduce((acc: any, s: any) => {
+  // Dados por prioridade - memoizado
+  const priorityData = useMemo(() => Object.entries(
+    services.reduce((acc: Record<string, number>, s) => {
       acc[s.priority] = (acc[s.priority] || 0) + 1
       return acc
     }, {})
   ).map(([priority, count]) => ({
     priority,
     count: count as number
-  }))
+  })), [services])
 
   if (!user) {
     return <div>Carregando...</div>
@@ -148,7 +154,7 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main id="main-content" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8 flex justify-between items-center">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
@@ -302,7 +308,7 @@ export default function DashboardPage() {
                 <TrendingUp className="w-5 h-5 mr-2 text-primary-600" />
                 <h2 className="text-xl font-semibold text-gray-900">Tendência (7 dias)</h2>
               </div>
-              <ServiceTrendChart data={getTrendData()} />
+              <ServiceTrendChart data={trendData} />
             </div>
 
             {/* Gráfico de Categorias */}
@@ -344,7 +350,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : services.length > 0 ? (
-              services.slice(0, 5).map((service: any) => (
+              services.slice(0, 5).map((service) => (
               <div 
                 key={service.id} 
                 className="px-6 py-4 hover:bg-gray-50 cursor-pointer"

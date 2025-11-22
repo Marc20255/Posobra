@@ -6,10 +6,11 @@ import { authService } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { Bell, User, LogOut, Menu } from 'lucide-react'
 import { useState, useEffect } from 'react'
+import type { User as UserType } from '@/types/user'
 
 export function Header() {
   const router = useRouter()
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<UserType | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {

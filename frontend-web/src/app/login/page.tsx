@@ -31,6 +31,7 @@ export default function LoginPage() {
     formState: { errors },
   } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
+    mode: 'onBlur', // Validação em tempo real ao perder foco
   })
 
   const onSubmit = async (data: LoginForm) => {
@@ -67,7 +68,7 @@ export default function LoginPage() {
         toastService.error('Erro ao fazer login: resposta inválida')
       }
     } catch (err: any) {
-      console.error('Erro no login:', err)
+      // Erro já será logado pelo interceptor da API
       
       let errorMessage = 'Erro ao fazer login'
       

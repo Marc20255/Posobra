@@ -83,7 +83,7 @@ export function Hero() {
                       <span className="font-semibold text-white">Construtora</span>
                       <CheckCircle2 className="w-5 h-5 text-green-300" />
                     </div>
-                    <p className="text-sm text-primary-100">Gerencia empreendimentos e acompanha serviços</p>
+                    <p className="text-sm text-primary-100">Gerencia empreendimentos, unidades e acompanha serviços com analytics completo</p>
                   </div>
                 </div>
 
@@ -97,7 +97,7 @@ export function Hero() {
                       <span className="font-semibold text-white">Técnico</span>
                       <CheckCircle2 className="w-5 h-5 text-green-300" />
                     </div>
-                    <p className="text-sm text-primary-100">Executa serviços com qualidade e agilidade</p>
+                    <p className="text-sm text-primary-100">Aceita serviços, atualiza status e executa com qualidade</p>
                   </div>
                 </div>
 
@@ -111,7 +111,7 @@ export function Hero() {
                       <span className="font-semibold text-white">Cliente</span>
                       <CheckCircle2 className="w-5 h-5 text-green-300" />
                     </div>
-                    <p className="text-sm text-primary-100">Acompanha serviços e avalia atendimento</p>
+                    <p className="text-sm text-primary-100">Abre solicitações, acompanha status e avalia atendimento</p>
                   </div>
                 </div>
 

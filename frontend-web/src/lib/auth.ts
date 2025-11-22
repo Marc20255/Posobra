@@ -1,21 +1,7 @@
 import api from './api'
-
-export interface User {
-  id: number
-  name: string
-  email: string
-  role: 'client' | 'technician' | 'admin' | 'constructor'
-  phone?: string
-  avatar_url?: string
-}
-
-export interface AuthResponse {
-  success: boolean
-  data: {
-    user: User
-    token: string
-  }
-}
+import type { User, AuthResponse, LoginResponse } from '@/types/user'
+import { ApiResponse } from '@/types/api'
+import { logger } from './logger'
 
 export const authService = {
   async register(data: {
@@ -25,17 +11,17 @@ export const authService = {
     phone?: string
     role?: 'client' | 'technician' | 'constructor'
   }): Promise<AuthResponse> {
-    const response = await api.post<AuthResponse>('/auth/register', data)
+    const response = await api.post<ApiResponse<AuthResponse['data']>>('/auth/register', data)
     if (response.data.success && typeof window !== 'undefined') {
       localStorage.setItem('token', response.data.data.token)
       localStorage.setItem('user', JSON.stringify(response.data.data.user))
     }
-    return response.data
+    return response.data as AuthResponse
   },
 
-  async login(email: string, password: string): Promise<any> {
+  async login(email: string, password: string): Promise<LoginResponse> {
     try {
-      const response = await api.post<any>('/auth/login', {
+      const response = await api.post<ApiResponse<LoginResponse['data']>>('/auth/login', {
         email,
         password,
       })
@@ -46,15 +32,15 @@ export const authService = {
           localStorage.setItem('user', JSON.stringify(response.data.data.user))
         }
       }
-      return response.data
-    } catch (error: any) {
-      console.error('Erro no login:', error)
+      return response.data as LoginResponse
+    } catch (error) {
+      logger.error('Erro no login:', error)
       throw error
     }
   },
 
   async loginWithRole(email: string, password: string, role: string): Promise<AuthResponse> {
-    const response = await api.post<AuthResponse>('/auth/login-with-role', {
+    const response = await api.post<ApiResponse<AuthResponse['data']>>('/auth/login-with-role', {
       email,
       password,
       role,
@@ -63,7 +49,7 @@ export const authService = {
       localStorage.setItem('token', response.data.data.token)
       localStorage.setItem('user', JSON.stringify(response.data.data.user))
     }
-    return response.data
+    return response.data as AuthResponse
   },
 
   logout(): void {

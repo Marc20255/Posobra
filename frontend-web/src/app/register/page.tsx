@@ -35,6 +35,7 @@ export default function RegisterPage() {
     formState: { errors },
   } = useForm<RegisterForm>({
     resolver: zodResolver(registerSchema),
+    mode: 'onBlur', // Validação em tempo real ao perder foco
     defaultValues: {
       role: 'client',
     },
