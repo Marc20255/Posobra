@@ -5,9 +5,18 @@ dotenv.config();
 
 const { Pool } = pg;
 
+// Log para debug (remover em produção se necessário)
+console.log('🔍 Configuração do Banco de Dados:');
+console.log('DB_HOST:', process.env.DB_HOST || 'NÃO DEFINIDO');
+console.log('DB_PORT:', process.env.DB_PORT || 'NÃO DEFINIDO');
+console.log('DB_NAME:', process.env.DB_NAME || 'NÃO DEFINIDO');
+console.log('DB_USER:', process.env.DB_USER || 'NÃO DEFINIDO');
+console.log('DB_PASS:', process.env.DB_PASS ? '***DEFINIDO***' : 'NÃO DEFINIDO');
+console.log('NODE_ENV:', process.env.NODE_ENV || 'NÃO DEFINIDO');
+
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
+  port: parseInt(process.env.DB_PORT || '5432', 10),
   database: process.env.DB_NAME || 'pos_obra',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASS || 'postgres',
