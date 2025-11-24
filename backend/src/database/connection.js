@@ -1,5 +1,6 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
+import dns from 'dns';
 
 dotenv.config();
 
@@ -14,16 +15,16 @@ console.log('DB_USER:', process.env.DB_USER || 'NÃO DEFINIDO');
 console.log('DB_PASS:', process.env.DB_PASS ? '***DEFINIDO***' : 'NÃO DEFINIDO');
 console.log('NODE_ENV:', process.env.NODE_ENV || 'NÃO DEFINIDO');
 
-// Forçar IPv4 para evitar problemas de conectividade
+// Configurar DNS para usar apenas IPv4
+dns.setDefaultResultOrder('ipv4first');
+
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432', 10),
   database: process.env.DB_NAME || 'pos_obra',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASS || 'postgres',
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-  // Forçar IPv4 para evitar problemas com IPv6
-  family: 4
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 };
 
 const pool = new Pool(dbConfig);
