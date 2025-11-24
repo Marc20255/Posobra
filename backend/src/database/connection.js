@@ -15,17 +15,30 @@ console.log('DB_USER:', process.env.DB_USER || 'NÃO DEFINIDO');
 console.log('DB_PASS:', process.env.DB_PASS ? '***DEFINIDO***' : 'NÃO DEFINIDO');
 console.log('NODE_ENV:', process.env.NODE_ENV || 'NÃO DEFINIDO');
 
-// Configurar DNS para usar apenas IPv4
+// Configurar DNS para usar apenas IPv4 globalmente
+// Isso força o Node.js a preferir IPv4 ao resolver hostnames
 dns.setDefaultResultOrder('ipv4first');
 
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  database: process.env.DB_NAME || 'pos_obra',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASS || 'postgres',
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-};
+// Em produção, usar connection string do Supabase se disponível
+let dbConfig;
+
+if (process.env.DATABASE_URL) {
+  // Se DATABASE_URL estiver definida, usar ela (mais confiável)
+  dbConfig = {
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  };
+} else {
+  // Caso contrário, usar variáveis individuais
+  dbConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5432', 10),
+    database: process.env.DB_NAME || 'pos_obra',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASS || 'postgres',
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  };
+}
 
 const pool = new Pool(dbConfig);
 
@@ -363,4 +376,3 @@ export async function initDatabase() {
 }
 
 export default pool;
-
