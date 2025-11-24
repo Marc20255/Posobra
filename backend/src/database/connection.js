@@ -14,14 +14,19 @@ console.log('DB_USER:', process.env.DB_USER || 'NÃO DEFINIDO');
 console.log('DB_PASS:', process.env.DB_PASS ? '***DEFINIDO***' : 'NÃO DEFINIDO');
 console.log('NODE_ENV:', process.env.NODE_ENV || 'NÃO DEFINIDO');
 
-const pool = new Pool({
+// Forçar IPv4 para evitar problemas de conectividade
+const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432', 10),
   database: process.env.DB_NAME || 'pos_obra',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASS || 'postgres',
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  // Forçar IPv4 para evitar problemas com IPv6
+  family: 4
+};
+
+const pool = new Pool(dbConfig);
 
 // Test connection
 pool.on('connect', () => {
