@@ -23,17 +23,38 @@ dns.setDefaultResultOrder('ipv4first');
 
 // Função para resolver hostname para IPv4
 async function resolveToIPv4(hostname) {
-  if (!hostname || hostname === 'localhost' || hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-    return hostname; // Já é IP ou localhost
+  if (!hostname || hostname === 'localhost') {
+    return hostname; // localhost não precisa resolver
+  }
+  
+  // Se já é um IP IPv4, retornar direto
+  if (hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+    console.log(`✅ Hostname já é IPv4: ${hostname}`);
+    return hostname;
   }
   
   try {
+    console.log(`🔍 Tentando resolver ${hostname} para IPv4...`);
     const result = await lookup(hostname, { family: 4 });
     console.log(`✅ Resolvido ${hostname} para IPv4: ${result.address}`);
     return result.address;
   } catch (error) {
-    console.warn(`⚠️ Erro ao resolver ${hostname} para IPv4, usando hostname original:`, error.message);
-    return hostname;
+    console.error(`❌ Erro ao resolver ${hostname} para IPv4:`, error.message);
+    console.warn(`⚠️ Tentando resolver sem especificar família...`);
+    try {
+      // Tentar resolver sem especificar família, mas filtrar apenas IPv4
+      const result = await lookup(hostname);
+      if (result.family === 4) {
+        console.log(`✅ Resolvido ${hostname} para IPv4: ${result.address}`);
+        return result.address;
+      } else {
+        console.error(`❌ Resolução retornou IPv6: ${result.address}`);
+        throw new Error('Resolução retornou IPv6');
+      }
+    } catch (error2) {
+      console.error(`❌ Falha total na resolução de ${hostname}`);
+      throw error2;
+    }
   }
 }
 
@@ -96,9 +117,21 @@ async function createPool() {
     // Usar variáveis individuais
     let dbHost = process.env.DB_HOST || 'localhost';
     
-    // Resolver hostname para IPv4 em produção
+    // SEMPRE resolver hostname para IPv4 em produção
     if (process.env.NODE_ENV === 'production' && dbHost !== 'localhost') {
-      dbHost = await resolveToIPv4(dbHost);
+      console.log(`🔍 Resolvendo hostname ${dbHost} para IPv4...`);
+      try {
+        dbHost = await resolveToIPv4(dbHost);
+        console.log(`✅ Hostname resolvido para IPv4: ${dbHost}`);
+        
+        // Verificar se realmente é IPv4
+        if (!dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+          throw new Error(`Resolução não retornou IPv4 válido: ${dbHost}`);
+        }
+      } catch (error) {
+        console.error(`❌ ERRO CRÍTICO: Não foi possível resolver para IPv4:`, error.message);
+        throw new Error(`Falha ao resolver ${dbHost} para IPv4: ${error.message}`);
+      }
     }
     
     dbConfig = {
@@ -109,8 +142,16 @@ async function createPool() {
       password: process.env.DB_PASS || 'postgres',
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
     };
+    
+    console.log(`🔍 Configuração final do Pool:`);
+    console.log(`   Host: ${dbConfig.host} ${dbConfig.host.match(/^\d+\.\d+\.\d+\.\d+$/) ? '(IPv4 ✅)' : '(hostname ⚠️)'}`);
+    console.log(`   Port: ${dbConfig.port}`);
+    console.log(`   Database: ${dbConfig.database}`);
+    console.log(`   User: ${dbConfig.user}`);
   }
   
+  // Criar Pool com configuração
+  console.log('🔍 Criando Pool do PostgreSQL...');
   pool = new Pool(dbConfig);
   
   // Test connection
