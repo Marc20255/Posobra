@@ -116,41 +116,64 @@ let poolPromise = null;
 async function createPool() {
   if (pool) return pool;
   
+  console.log('🚀 Iniciando criação do Pool...');
+  console.log('🔍 NODE_ENV:', process.env.NODE_ENV);
+  console.log('🔍 DATABASE_URL definida?', !!process.env.DATABASE_URL);
+  
   let dbConfig;
   
   if (process.env.DATABASE_URL) {
+    console.log('📝 Usando DATABASE_URL...');
     // Processar DATABASE_URL para usar IPv4
     const processedUrl = await processDatabaseUrl(process.env.DATABASE_URL);
     dbConfig = {
       connectionString: processedUrl,
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
     };
+    console.log('✅ Configuração via DATABASE_URL pronta');
   } else {
+    console.log('📝 Usando variáveis individuais...');
     // Usar variáveis individuais
     let dbHost = process.env.DB_HOST || 'localhost';
+    const originalHost = dbHost;
     
-    // SEMPRE resolver hostname para IPv4 em produção
-    if (process.env.NODE_ENV === 'production' && dbHost !== 'localhost') {
-      console.log(`🔍 Resolvendo hostname ${dbHost} para IPv4...`);
+    console.log(`🔍 Host original: ${dbHost}`);
+    
+    // SEMPRE resolver hostname para IPv4 em produção (ou se não for localhost)
+    if (dbHost !== 'localhost' && !dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      console.log(`🔍 Hostname detectado (não é IP), resolvendo para IPv4...`);
       try {
         dbHost = await resolveToIPv4(dbHost);
-        console.log(`✅ Hostname resolvido para IPv4: ${dbHost}`);
+        console.log(`✅ Hostname ${originalHost} resolvido para IPv4: ${dbHost}`);
         
         // Verificar se realmente é IPv4
         if (!dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+          console.error(`❌ Resolução retornou valor inválido: ${dbHost}`);
           throw new Error(`Resolução não retornou IPv4 válido: ${dbHost}`);
         }
+        console.log(`✅ Validação IPv4 passou: ${dbHost}`);
       } catch (error) {
-        console.error(`❌ ERRO CRÍTICO: Não foi possível resolver para IPv4:`, error.message);
-        throw new Error(`Falha ao resolver ${dbHost} para IPv4: ${error.message}`);
+        console.error(`❌ ERRO CRÍTICO ao resolver para IPv4:`);
+        console.error(`   Host original: ${originalHost}`);
+        console.error(`   Erro: ${error.message}`);
+        console.error(`   Stack: ${error.stack}`);
+        throw new Error(`Falha ao resolver ${originalHost} para IPv4: ${error.message}`);
       }
+    } else if (dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      console.log(`✅ Host já é IPv4: ${dbHost}`);
+    } else {
+      console.log(`⚠️ Host é localhost, não precisa resolver`);
     }
     
     // IMPORTANTE: Usar porta 5432 para conexão direta (suporta IPv4)
     // Porta 6543 é apenas para modo transação e pode ter problemas com IPv4
     const dbPort = parseInt(process.env.DB_PORT || '5432', 10);
+    console.log(`🔍 Porta configurada: ${dbPort}`);
     if (dbPort === 6543) {
-      console.warn('⚠️ Porta 6543 detectada. Recomendado usar 5432 para conexão direta com IPv4.');
+      console.warn('⚠️⚠️⚠️ ATENÇÃO: Porta 6543 detectada!');
+      console.warn('⚠️ Porta 6543 pode ter problemas com IPv4.');
+      console.warn('⚠️ Recomendado mudar para porta 5432 no Railway.');
+      console.warn('⚠️ Mude DB_PORT de 6543 para 5432 nas variáveis de ambiente.');
     }
     
     dbConfig = {
@@ -160,21 +183,33 @@ async function createPool() {
       user: process.env.DB_USER || 'postgres',
       password: process.env.DB_PASS || 'postgres',
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-      // Tentar forçar IPv4 através do keepAlive
       keepAlive: true,
       keepAliveInitialDelayMillis: 0
     };
     
     console.log(`🔍 Configuração final do Pool:`);
-    console.log(`   Host: ${dbConfig.host} ${dbConfig.host.match(/^\d+\.\d+\.\d+\.\d+$/) ? '(IPv4 ✅)' : '(hostname ⚠️)'}`);
-    console.log(`   Port: ${dbConfig.port}`);
+    console.log(`   Host: ${dbConfig.host} ${dbConfig.host.match(/^\d+\.\d+\.\d+\.\d+$/) ? '(IPv4 ✅)' : '(hostname ⚠️ PROBLEMA!)'}`);
+    console.log(`   Port: ${dbConfig.port} ${dbConfig.port === 6543 ? '(⚠️ PROBLEMA!)' : '(✅)'}`);
     console.log(`   Database: ${dbConfig.database}`);
     console.log(`   User: ${dbConfig.user}`);
+    
+    // Validação crítica
+    if (!dbConfig.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      console.error('❌❌❌ ERRO CRÍTICO: Host não é IPv4!');
+      console.error(`❌ Host atual: ${dbConfig.host}`);
+      throw new Error(`Host deve ser IPv4, mas recebeu: ${dbConfig.host}`);
+    }
   }
   
   // Criar Pool com configuração
-  console.log('🔍 Criando Pool do PostgreSQL...');
-  pool = new Pool(dbConfig);
+  console.log('🔍 Criando Pool do PostgreSQL com configuração acima...');
+  try {
+    pool = new Pool(dbConfig);
+    console.log('✅ Pool criado com sucesso');
+  } catch (error) {
+    console.error('❌ Erro ao criar Pool:', error);
+    throw error;
+  }
   
   // Test connection
   pool.on('connect', () => {
