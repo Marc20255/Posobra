@@ -2,11 +2,23 @@ import pg from 'pg';
 import dotenv from 'dotenv';
 import dns from 'dns';
 import { promisify } from 'util';
+import net from 'net';
 
 dotenv.config();
 
 const { Pool } = pg;
 const lookup = promisify(dns.lookup);
+
+// Monkey patch para forçar IPv4 no net.createConnection
+const originalCreateConnection = net.createConnection;
+net.createConnection = function(options, ...args) {
+  // Se for um objeto de opções com host, tentar resolver para IPv4
+  if (options && typeof options === 'object' && options.host && !options.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+    // Se não for IPv4, tentar resolver (mas isso é assíncrono, então não podemos fazer aqui)
+    // Por isso vamos garantir que sempre passamos IPv4 antes de chegar aqui
+  }
+  return originalCreateConnection.call(this, options, ...args);
+};
 
 // Log para debug (remover em produção se necessário)
 console.log('🔍 Configuração do Banco de Dados:');
@@ -134,13 +146,23 @@ async function createPool() {
       }
     }
     
+    // IMPORTANTE: Usar porta 5432 para conexão direta (suporta IPv4)
+    // Porta 6543 é apenas para modo transação e pode ter problemas com IPv4
+    const dbPort = parseInt(process.env.DB_PORT || '5432', 10);
+    if (dbPort === 6543) {
+      console.warn('⚠️ Porta 6543 detectada. Recomendado usar 5432 para conexão direta com IPv4.');
+    }
+    
     dbConfig = {
       host: dbHost,
-      port: parseInt(process.env.DB_PORT || '5432', 10),
+      port: dbPort,
       database: process.env.DB_NAME || 'pos_obra',
       user: process.env.DB_USER || 'postgres',
       password: process.env.DB_PASS || 'postgres',
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+      // Tentar forçar IPv4 através do keepAlive
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 0
     };
     
     console.log(`🔍 Configuração final do Pool:`);
