@@ -45,6 +45,18 @@ async function processDatabaseUrl(url) {
     // Parse da URL
     const urlObj = new URL(url);
     const hostname = urlObj.hostname;
+    const port = urlObj.port;
+    
+    console.log(`🔍 Processando DATABASE_URL:`);
+    console.log(`   Hostname: ${hostname}`);
+    console.log(`   Porta: ${port || 'padrão (5432)'}`);
+    
+    // Verificar se está usando porta de pooling
+    if (port === '6543' || url.includes('pgbouncer=true')) {
+      console.log('✅ Usando connection pooling (porta 6543)');
+    } else if (port === '5432') {
+      console.warn('⚠️ Usando porta 5432 (direta). Recomendado: porta 6543 com pgbouncer=true');
+    }
     
     // Resolver hostname para IPv4
     const ipv4 = await resolveToIPv4(hostname);
@@ -53,7 +65,7 @@ async function processDatabaseUrl(url) {
     if (ipv4 !== hostname && ipv4.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       urlObj.hostname = ipv4;
       const newUrl = urlObj.toString();
-      console.log(`✅ DATABASE_URL atualizada para usar IPv4: ${ipv4}`);
+      console.log(`✅ DATABASE_URL atualizada para usar IPv4: ${ipv4}:${port || '5432'}`);
       return newUrl;
     }
     
