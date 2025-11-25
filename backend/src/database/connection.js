@@ -1,10 +1,12 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
 import dns from 'dns';
+import { promisify } from 'util';
 
 dotenv.config();
 
 const { Pool } = pg;
+const lookup = promisify(dns.lookup);
 
 // Log para debug (remover em produção se necessário)
 console.log('🔍 Configuração do Banco de Dados:');
@@ -14,49 +16,115 @@ console.log('DB_NAME:', process.env.DB_NAME || 'NÃO DEFINIDO');
 console.log('DB_USER:', process.env.DB_USER || 'NÃO DEFINIDO');
 console.log('DB_PASS:', process.env.DB_PASS ? '***DEFINIDO***' : 'NÃO DEFINIDO');
 console.log('NODE_ENV:', process.env.NODE_ENV || 'NÃO DEFINIDO');
+console.log('DATABASE_URL:', process.env.DATABASE_URL ? '***DEFINIDO***' : 'NÃO DEFINIDO');
 
 // Configurar DNS para usar apenas IPv4 globalmente
-// Isso força o Node.js a preferir IPv4 ao resolver hostnames
 dns.setDefaultResultOrder('ipv4first');
 
-// Em produção, usar connection string do Supabase se disponível
-let dbConfig;
-
-if (process.env.DATABASE_URL) {
-  // Se DATABASE_URL estiver definida, usar ela (mais confiável)
-  dbConfig = {
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-  };
-} else {
-  // Caso contrário, usar variáveis individuais
-  dbConfig = {
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
-    database: process.env.DB_NAME || 'pos_obra',
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASS || 'postgres',
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-  };
+// Função para resolver hostname para IPv4
+async function resolveToIPv4(hostname) {
+  if (!hostname || hostname === 'localhost' || hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+    return hostname; // Já é IP ou localhost
+  }
+  
+  try {
+    const result = await lookup(hostname, { family: 4 });
+    console.log(`✅ Resolvido ${hostname} para IPv4: ${result.address}`);
+    return result.address;
+  } catch (error) {
+    console.warn(`⚠️ Erro ao resolver ${hostname} para IPv4, usando hostname original:`, error.message);
+    return hostname;
+  }
 }
 
-const pool = new Pool(dbConfig);
+// Função para extrair hostname de DATABASE_URL e substituir por IPv4
+async function processDatabaseUrl(url) {
+  if (!url) return null;
+  
+  try {
+    // Parse da URL
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+    
+    // Resolver hostname para IPv4
+    const ipv4 = await resolveToIPv4(hostname);
+    
+    // Se resolveu para IP diferente, substituir na URL
+    if (ipv4 !== hostname && ipv4.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      urlObj.hostname = ipv4;
+      const newUrl = urlObj.toString();
+      console.log(`✅ DATABASE_URL atualizada para usar IPv4: ${ipv4}`);
+      return newUrl;
+    }
+    
+    return url; // Retornar URL original se não precisar mudar
+  } catch (error) {
+    console.warn('⚠️ Erro ao processar DATABASE_URL, usando original:', error.message);
+    return url;
+  }
+}
 
-// Test connection
-pool.on('connect', () => {
-  console.log('✅ Conectado ao banco de dados PostgreSQL');
-});
+// Criar pool de forma assíncrona para garantir resolução IPv4
+let pool = null;
+let poolPromise = null;
 
-pool.on('error', (err) => {
-  console.error('❌ Erro inesperado no banco de dados:', err);
-  process.exit(-1);
-});
+async function createPool() {
+  if (pool) return pool;
+  
+  let dbConfig;
+  
+  if (process.env.DATABASE_URL) {
+    // Processar DATABASE_URL para usar IPv4
+    const processedUrl = await processDatabaseUrl(process.env.DATABASE_URL);
+    dbConfig = {
+      connectionString: processedUrl,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    };
+  } else {
+    // Usar variáveis individuais
+    let dbHost = process.env.DB_HOST || 'localhost';
+    
+    // Resolver hostname para IPv4 em produção
+    if (process.env.NODE_ENV === 'production' && dbHost !== 'localhost') {
+      dbHost = await resolveToIPv4(dbHost);
+    }
+    
+    dbConfig = {
+      host: dbHost,
+      port: parseInt(process.env.DB_PORT || '5432', 10),
+      database: process.env.DB_NAME || 'pos_obra',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASS || 'postgres',
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    };
+  }
+  
+  pool = new Pool(dbConfig);
+  
+  // Test connection
+  pool.on('connect', () => {
+    console.log('✅ Conectado ao banco de dados PostgreSQL');
+  });
+  
+  pool.on('error', (err) => {
+    console.error('❌ Erro inesperado no banco de dados:', err);
+    process.exit(-1);
+  });
+  
+  return pool;
+}
+
+// Inicializar pool imediatamente
+poolPromise = createPool();
 
 // Initialize database tables
 export async function initDatabase() {
+  // Garantir que o pool foi criado
+  const dbPool = await poolPromise;
+  
   try {
     // Create tables
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -78,19 +146,19 @@ export async function initDatabase() {
     `);
 
     // Remover constraint UNIQUE antiga do email (se existir)
-    await pool.query(`
+    await dbPool.query(`
       ALTER TABLE users 
       DROP CONSTRAINT IF EXISTS users_email_key;
     `);
 
     // Criar constraint única composta (email + role)
     // Permite mesmo email com roles diferentes
-    await pool.query(`
+    await dbPool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS users_email_role_unique 
       ON users(email, role);
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS services (
         id SERIAL PRIMARY KEY,
         client_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -117,7 +185,7 @@ export async function initDatabase() {
 
     // Criar índices para coordenadas
     // Adicionar colunas lat e lng se não existirem
-    await pool.query(`
+    await dbPool.query(`
       DO $$ 
       BEGIN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
@@ -133,7 +201,7 @@ export async function initDatabase() {
 
     // Criar índices para coordenadas (usando índice parcial para evitar NULLs)
     try {
-      await pool.query(`
+      await dbPool.query(`
         CREATE INDEX IF NOT EXISTS idx_services_coordinates 
         ON services(lat, lng) 
         WHERE lat IS NOT NULL AND lng IS NOT NULL;
@@ -144,11 +212,11 @@ export async function initDatabase() {
       console.log('Índice de coordenadas será criado após adicionar colunas');
     }
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE INDEX IF NOT EXISTS idx_services_zip_code ON services(zip_code);
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS service_photos (
         id SERIAL PRIMARY KEY,
         service_id INTEGER REFERENCES services(id) ON DELETE CASCADE,
@@ -160,7 +228,7 @@ export async function initDatabase() {
       );
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS service_documents (
         id SERIAL PRIMARY KEY,
         service_id INTEGER REFERENCES services(id) ON DELETE CASCADE,
@@ -172,7 +240,7 @@ export async function initDatabase() {
       );
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS service_audios (
         id SERIAL PRIMARY KEY,
         service_id INTEGER REFERENCES services(id) ON DELETE CASCADE,
@@ -184,7 +252,7 @@ export async function initDatabase() {
       );
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS chat_messages (
         id SERIAL PRIMARY KEY,
         service_id INTEGER REFERENCES services(id) ON DELETE CASCADE,
@@ -197,7 +265,7 @@ export async function initDatabase() {
       );
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS reviews (
         id SERIAL PRIMARY KEY,
         service_id INTEGER REFERENCES services(id) ON DELETE CASCADE,
@@ -210,7 +278,7 @@ export async function initDatabase() {
       );
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS constructor_employees (
         id SERIAL PRIMARY KEY,
         constructor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -225,7 +293,7 @@ export async function initDatabase() {
       );
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS notifications (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -239,7 +307,7 @@ export async function initDatabase() {
     `);
 
     // Sistema de Badges e Conquistas
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS user_badges (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -252,12 +320,12 @@ export async function initDatabase() {
       );
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE INDEX IF NOT EXISTS idx_user_badges_user ON user_badges(user_id);
     `);
 
     // Histórico de Ações (Activity Log)
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS activity_logs (
         id SERIAL PRIMARY KEY,
         service_id INTEGER REFERENCES services(id) ON DELETE CASCADE,
@@ -269,16 +337,16 @@ export async function initDatabase() {
       );
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE INDEX IF NOT EXISTS idx_activity_logs_service ON activity_logs(service_id);
     `);
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id);
     `);
 
     // Adicionar campos de controle de remoção na tabela services
-    await pool.query(`
+    await dbPool.query(`
       ALTER TABLE services 
       ADD COLUMN IF NOT EXISTS deletion_requested_by INTEGER REFERENCES users(id),
       ADD COLUMN IF NOT EXISTS deletion_requested_at TIMESTAMP,
@@ -288,7 +356,7 @@ export async function initDatabase() {
     `);
 
     // Empreendimentos (construções)
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS developments (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -304,7 +372,7 @@ export async function initDatabase() {
     `);
 
     // Unidades (apartamentos/casas)
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS units (
         id SERIAL PRIMARY KEY,
         development_id INTEGER REFERENCES developments(id) ON DELETE CASCADE,
@@ -322,19 +390,19 @@ export async function initDatabase() {
     `);
 
     // Vincular serviços a unidades
-    await pool.query(`
+    await dbPool.query(`
       ALTER TABLE services 
       ADD COLUMN IF NOT EXISTS unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL;
     `);
 
     // Adicionar campos específicos do edital
-    await pool.query(`
+    await dbPool.query(`
       ALTER TABLE services 
       ADD COLUMN IF NOT EXISTS maintenance_cost DECIMAL(10, 2);
     `);
 
     // Histórico de status do serviço
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS service_status_history (
         id SERIAL PRIMARY KEY,
         service_id INTEGER REFERENCES services(id) ON DELETE CASCADE,
@@ -346,7 +414,7 @@ export async function initDatabase() {
     `);
 
     // Avaliação detalhada (conforme edital)
-    await pool.query(`
+    await dbPool.query(`
       ALTER TABLE reviews 
       ADD COLUMN IF NOT EXISTS service_quality INTEGER CHECK (service_quality >= 1 AND service_quality <= 5),
       ADD COLUMN IF NOT EXISTS response_speed INTEGER CHECK (response_speed >= 1 AND response_speed <= 5),
@@ -356,7 +424,7 @@ export async function initDatabase() {
     `);
 
     // Create indexes for better performance
-    await pool.query(`
+    await dbPool.query(`
       CREATE INDEX IF NOT EXISTS idx_services_client ON services(client_id);
       CREATE INDEX IF NOT EXISTS idx_services_technician ON services(technician_id);
       CREATE INDEX IF NOT EXISTS idx_services_status ON services(status);
@@ -375,4 +443,56 @@ export async function initDatabase() {
   }
 }
 
-export default pool;
+// Função helper para obter o pool (resolve a promise)
+export async function getPool() {
+  return await poolPromise;
+}
+
+// Criar um wrapper que resolve a promise automaticamente
+// Mantém compatibilidade com imports diretos como: await pool.query(...)
+const poolWrapper = {
+  query: async (...args) => {
+    const resolvedPool = await poolPromise;
+    return resolvedPool.query(...args);
+  },
+  connect: async (...args) => {
+    const resolvedPool = await poolPromise;
+    return resolvedPool.connect(...args);
+  },
+  end: async (...args) => {
+    const resolvedPool = await poolPromise;
+    return resolvedPool.end(...args);
+  },
+  on: (...args) => {
+    // Event handlers podem ser registrados antes do pool estar pronto
+    poolPromise.then(resolvedPool => {
+      resolvedPool.on(...args);
+    });
+  },
+  // Proxy para outras propriedades/métodos
+  get [Symbol.toPrimitive]() {
+    return () => poolPromise;
+  }
+};
+
+// Adicionar todas as propriedades do Pool usando Proxy
+const poolProxy = new Proxy(poolWrapper, {
+  get(target, prop) {
+    // Se for uma propriedade que já existe no wrapper, retornar
+    if (prop in target) {
+      const value = target[prop];
+      return typeof value === 'function' ? value.bind(target) : value;
+    }
+    // Para outras propriedades, resolver a promise e retornar
+    return async function(...args) {
+      const resolvedPool = await poolPromise;
+      const method = resolvedPool[prop];
+      if (typeof method === 'function') {
+        return method.apply(resolvedPool, args);
+      }
+      return method;
+    };
+  }
+});
+
+export default poolProxy;
