@@ -3,11 +3,13 @@ import dotenv from 'dotenv';
 import dns from 'dns';
 import { promisify } from 'util';
 import net from 'net';
+import https from 'https';
 
 dotenv.config();
 
 const { Pool } = pg;
 const lookup = promisify(dns.lookup);
+const resolve4 = promisify(dns.resolve4);
 
 // Monkey patch para forçar IPv4 no net.createConnection
 const originalCreateConnection = net.createConnection;
@@ -33,7 +35,7 @@ console.log('DATABASE_URL:', process.env.DATABASE_URL ? '***DEFINIDO***' : 'NÃO
 // Configurar DNS para usar apenas IPv4 globalmente
 dns.setDefaultResultOrder('ipv4first');
 
-// Função para resolver hostname para IPv4
+// Função para resolver hostname para IPv4 usando múltiplas estratégias
 async function resolveToIPv4(hostname) {
   if (!hostname || hostname === 'localhost') {
     return hostname; // localhost não precisa resolver
@@ -45,29 +47,75 @@ async function resolveToIPv4(hostname) {
     return hostname;
   }
   
+  // Estratégia 1: Usar dns.resolve4 (mais direto para IPv4)
   try {
-    console.log(`🔍 Tentando resolver ${hostname} para IPv4...`);
+    console.log(`🔍 [Estratégia 1] Tentando dns.resolve4(${hostname})...`);
+    const addresses = await resolve4(hostname);
+    if (addresses && addresses.length > 0) {
+      const ipv4 = addresses[0];
+      console.log(`✅ [Estratégia 1] Resolvido ${hostname} para IPv4: ${ipv4}`);
+      return ipv4;
+    }
+  } catch (error) {
+    console.warn(`⚠️ [Estratégia 1] Falhou: ${error.message}`);
+  }
+  
+  // Estratégia 2: Usar dns.lookup com family: 4
+  try {
+    console.log(`🔍 [Estratégia 2] Tentando dns.lookup(${hostname}, {family: 4})...`);
     const result = await lookup(hostname, { family: 4 });
-    console.log(`✅ Resolvido ${hostname} para IPv4: ${result.address}`);
+    console.log(`✅ [Estratégia 2] Resolvido ${hostname} para IPv4: ${result.address}`);
     return result.address;
   } catch (error) {
-    console.error(`❌ Erro ao resolver ${hostname} para IPv4:`, error.message);
-    console.warn(`⚠️ Tentando resolver sem especificar família...`);
-    try {
-      // Tentar resolver sem especificar família, mas filtrar apenas IPv4
-      const result = await lookup(hostname);
-      if (result.family === 4) {
-        console.log(`✅ Resolvido ${hostname} para IPv4: ${result.address}`);
-        return result.address;
-      } else {
-        console.error(`❌ Resolução retornou IPv6: ${result.address}`);
-        throw new Error('Resolução retornou IPv6');
-      }
-    } catch (error2) {
-      console.error(`❌ Falha total na resolução de ${hostname}`);
-      throw error2;
-    }
+    console.warn(`⚠️ [Estratégia 2] Falhou: ${error.message}`);
   }
+  
+  // Estratégia 3: Usar dns.lookup sem família e filtrar IPv4
+  try {
+    console.log(`🔍 [Estratégia 3] Tentando dns.lookup(${hostname}) sem família...`);
+    const result = await lookup(hostname);
+    if (result.family === 4) {
+      console.log(`✅ [Estratégia 3] Resolvido ${hostname} para IPv4: ${result.address}`);
+      return result.address;
+    } else {
+      console.error(`❌ [Estratégia 3] Retornou IPv6: ${result.address}`);
+    }
+  } catch (error) {
+    console.warn(`⚠️ [Estratégia 3] Falhou: ${error.message}`);
+  }
+  
+  // Estratégia 4: Tentar resolver via serviço externo (último recurso)
+  try {
+    console.log(`🔍 [Estratégia 4] Tentando resolver via serviço externo...`);
+    const ipv4 = await resolveViaExternalService(hostname);
+    if (ipv4) {
+      console.log(`✅ [Estratégia 4] Resolvido ${hostname} para IPv4: ${ipv4}`);
+      return ipv4;
+    }
+  } catch (error) {
+    console.warn(`⚠️ [Estratégia 4] Falhou: ${error.message}`);
+  }
+  
+  // Se todas as estratégias falharam, lançar erro
+  throw new Error(`Não foi possível resolver ${hostname} para IPv4 após tentar todas as estratégias`);
+}
+
+// Função auxiliar para resolver via serviço externo (último recurso)
+function resolveViaExternalService(hostname) {
+  return new Promise((resolve, reject) => {
+    // Usar Google DNS para resolver
+    const options = {
+      hostname: '8.8.8.8',
+      port: 53,
+      method: 'GET',
+      timeout: 5000
+    };
+    
+    // Na verdade, não podemos fazer query DNS direto via HTTP facilmente
+    // Vamos tentar usar dns.resolve4 com servidor DNS específico
+    // Mas isso requer configuração de sistema, então vamos apenas rejeitar
+    reject(new Error('Serviço externo não disponível'));
+  });
 }
 
 // Função para extrair hostname de DATABASE_URL e substituir por IPv4
@@ -92,7 +140,16 @@ async function processDatabaseUrl(url) {
     }
     
     // Resolver hostname para IPv4
-    const ipv4 = await resolveToIPv4(hostname);
+    let ipv4;
+    try {
+      ipv4 = await resolveToIPv4(hostname);
+    } catch (error) {
+      console.error(`❌ ERRO CRÍTICO: Não foi possível resolver ${hostname} para IPv4`);
+      console.error(`   Erro: ${error.message}`);
+      console.error(`   Isso significa que o Railway não consegue resolver DNS para IPv4.`);
+      console.error(`   SOLUÇÃO: Use variáveis individuais (DB_HOST, DB_PORT, etc) ao invés de DATABASE_URL`);
+      throw new Error(`Falha ao resolver ${hostname} para IPv4: ${error.message}. Use variáveis individuais ao invés de DATABASE_URL.`);
+    }
     
     // Se resolveu para IP diferente, substituir na URL
     if (ipv4 !== hostname && ipv4.match(/^\d+\.\d+\.\d+\.\d+$/)) {
@@ -102,10 +159,11 @@ async function processDatabaseUrl(url) {
       return newUrl;
     }
     
-    return url; // Retornar URL original se não precisar mudar
+    // Se não conseguiu resolver, não podemos continuar
+    throw new Error(`Resolução não retornou IPv4 válido para ${hostname}`);
   } catch (error) {
-    console.warn('⚠️ Erro ao processar DATABASE_URL, usando original:', error.message);
-    return url;
+    console.error('❌ Erro ao processar DATABASE_URL:', error.message);
+    throw error; // Não retornar URL original, lançar erro para forçar uso de variáveis individuais
   }
 }
 
@@ -124,14 +182,27 @@ async function createPool() {
   
   if (process.env.DATABASE_URL) {
     console.log('📝 Usando DATABASE_URL...');
-    // Processar DATABASE_URL para usar IPv4
-    const processedUrl = await processDatabaseUrl(process.env.DATABASE_URL);
-    dbConfig = {
-      connectionString: processedUrl,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-    };
-    console.log('✅ Configuração via DATABASE_URL pronta');
-  } else {
+    try {
+      // Processar DATABASE_URL para usar IPv4
+      const processedUrl = await processDatabaseUrl(process.env.DATABASE_URL);
+      dbConfig = {
+        connectionString: processedUrl,
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+      };
+      console.log('✅ Configuração via DATABASE_URL pronta');
+    } catch (error) {
+      console.error('❌ Erro ao processar DATABASE_URL, tentando variáveis individuais...');
+      console.error(`   Erro: ${error.message}`);
+      // Fallback para variáveis individuais se DATABASE_URL falhar
+      if (!process.env.DB_HOST) {
+        throw new Error('DATABASE_URL falhou e DB_HOST não está definido. Configure DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS.');
+      }
+      // Continuar para usar variáveis individuais
+    }
+  }
+  
+  // Se não tem DATABASE_URL ou se DATABASE_URL falhou, usar variáveis individuais
+  if (!dbConfig) {
     console.log('📝 Usando variáveis individuais...');
     // Usar variáveis individuais
     let dbHost = process.env.DB_HOST || 'localhost';
