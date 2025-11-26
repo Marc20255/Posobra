@@ -177,32 +177,13 @@ async function createPool() {
   console.log('🚀 Iniciando criação do Pool...');
   console.log('🔍 NODE_ENV:', process.env.NODE_ENV);
   console.log('🔍 DATABASE_URL definida?', !!process.env.DATABASE_URL);
+  console.log('⚠️ IMPORTANTE: Ignorando DATABASE_URL e usando apenas variáveis individuais para garantir IPv4');
   
   let dbConfig;
   
-  if (process.env.DATABASE_URL) {
-    console.log('📝 Usando DATABASE_URL...');
-    try {
-      // Processar DATABASE_URL para usar IPv4
-      const processedUrl = await processDatabaseUrl(process.env.DATABASE_URL);
-      dbConfig = {
-        connectionString: processedUrl,
-        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-      };
-      console.log('✅ Configuração via DATABASE_URL pronta');
-    } catch (error) {
-      console.error('❌ Erro ao processar DATABASE_URL, tentando variáveis individuais...');
-      console.error(`   Erro: ${error.message}`);
-      // Fallback para variáveis individuais se DATABASE_URL falhar
-      if (!process.env.DB_HOST) {
-        throw new Error('DATABASE_URL falhou e DB_HOST não está definido. Configure DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS.');
-      }
-      // Continuar para usar variáveis individuais
-    }
-  }
-  
-  // Se não tem DATABASE_URL ou se DATABASE_URL falhou, usar variáveis individuais
-  if (!dbConfig) {
+  // SEMPRE usar variáveis individuais para ter controle total sobre IPv4
+  // DATABASE_URL pode causar problemas de resolução DNS no Railway
+  if (process.env.DB_HOST) {
     console.log('📝 Usando variáveis individuais...');
     // Usar variáveis individuais
     let dbHost = process.env.DB_HOST || 'localhost';
@@ -210,9 +191,10 @@ async function createPool() {
     
     console.log(`🔍 Host original: ${dbHost}`);
     
-    // SEMPRE resolver hostname para IPv4 em produção (ou se não for localhost)
+    // Tentar resolver hostname para IPv4, mas se falhar, usar hostname diretamente
+    // e confiar no pg para fazer a conexão correta
     if (dbHost !== 'localhost' && !dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-      console.log(`🔍 Hostname detectado (não é IP), resolvendo para IPv4...`);
+      console.log(`🔍 Hostname detectado (não é IP), tentando resolver para IPv4...`);
       try {
         dbHost = await resolveToIPv4(dbHost);
         console.log(`✅ Hostname ${originalHost} resolvido para IPv4: ${dbHost}`);
@@ -224,11 +206,10 @@ async function createPool() {
         }
         console.log(`✅ Validação IPv4 passou: ${dbHost}`);
       } catch (error) {
-        console.error(`❌ ERRO CRÍTICO ao resolver para IPv4:`);
-        console.error(`   Host original: ${originalHost}`);
-        console.error(`   Erro: ${error.message}`);
-        console.error(`   Stack: ${error.stack}`);
-        throw new Error(`Falha ao resolver ${originalHost} para IPv4: ${error.message}`);
+        console.warn(`⚠️ Não foi possível resolver ${originalHost} para IPv4: ${error.message}`);
+        console.warn(`⚠️ Usando hostname diretamente e forçando IPv4 via configuração do pg...`);
+        // Manter hostname original e confiar no pg com family: 4
+        dbHost = originalHost;
       }
     } else if (dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       console.log(`✅ Host já é IPv4: ${dbHost}`);
@@ -237,14 +218,12 @@ async function createPool() {
     }
     
     // IMPORTANTE: Usar porta 5432 para conexão direta (suporta IPv4)
-    // Porta 6543 é apenas para modo transação e pode ter problemas com IPv4
     const dbPort = parseInt(process.env.DB_PORT || '5432', 10);
     console.log(`🔍 Porta configurada: ${dbPort}`);
     if (dbPort === 6543) {
       console.warn('⚠️⚠️⚠️ ATENÇÃO: Porta 6543 detectada!');
       console.warn('⚠️ Porta 6543 pode ter problemas com IPv4.');
       console.warn('⚠️ Recomendado mudar para porta 5432 no Railway.');
-      console.warn('⚠️ Mude DB_PORT de 6543 para 5432 nas variáveis de ambiente.');
     }
     
     dbConfig = {
@@ -255,21 +234,19 @@ async function createPool() {
       password: process.env.DB_PASS || 'postgres',
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
       keepAlive: true,
-      keepAliveInitialDelayMillis: 0
+      keepAliveInitialDelayMillis: 0,
+      // Forçar IPv4 no nível do pg
+      family: 4
     };
     
     console.log(`🔍 Configuração final do Pool:`);
-    console.log(`   Host: ${dbConfig.host} ${dbConfig.host.match(/^\d+\.\d+\.\d+\.\d+$/) ? '(IPv4 ✅)' : '(hostname ⚠️ PROBLEMA!)'}`);
-    console.log(`   Port: ${dbConfig.port} ${dbConfig.port === 6543 ? '(⚠️ PROBLEMA!)' : '(✅)'}`);
+    console.log(`   Host: ${dbConfig.host} ${dbConfig.host.match(/^\d+\.\d+\.\d+\.\d+$/) ? '(IPv4 ✅)' : '(hostname - será resolvido com family: 4)'}`);
+    console.log(`   Port: ${dbConfig.port}`);
     console.log(`   Database: ${dbConfig.database}`);
     console.log(`   User: ${dbConfig.user}`);
-    
-    // Validação crítica
-    if (!dbConfig.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-      console.error('❌❌❌ ERRO CRÍTICO: Host não é IPv4!');
-      console.error(`❌ Host atual: ${dbConfig.host}`);
-      throw new Error(`Host deve ser IPv4, mas recebeu: ${dbConfig.host}`);
-    }
+    console.log(`   Family: ${dbConfig.family} (forçando IPv4)`);
+  } else {
+    throw new Error('DB_HOST não está definido. Configure DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS no Railway.');
   }
   
   // Criar Pool com configuração
