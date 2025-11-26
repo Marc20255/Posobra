@@ -135,20 +135,48 @@ async function resolveToIPv4(hostname) {
 async function resolveViaCommand(hostname) {
   try {
     // Tentar usar nslookup (disponível na maioria dos sistemas)
-    const { stdout } = await execAsync(`nslookup -type=A ${hostname} 8.8.8.8`, { timeout: 5000 });
-    const match = stdout.match(/Address:\s*(\d+\.\d+\.\d+\.\d+)/);
-    if (match && match[1]) {
-      return match[1];
+    console.log(`🔍 Executando: nslookup -type=A ${hostname} 8.8.8.8`);
+    const { stdout, stderr } = await execAsync(`nslookup -type=A ${hostname} 8.8.8.8`, { 
+      timeout: 10000,
+      maxBuffer: 1024 * 1024 // 1MB
+    });
+    console.log(`📝 nslookup stdout: ${stdout.substring(0, 200)}`);
+    if (stderr) console.log(`⚠️ nslookup stderr: ${stderr}`);
+    
+    // Tentar múltiplos padrões de regex
+    const patterns = [
+      /Address:\s*(\d+\.\d+\.\d+\.\d+)/,
+      /Address:\s+(\d+\.\d+\.\d+\.\d+)/,
+      /(\d+\.\d+\.\d+\.\d+)/,
+    ];
+    
+    for (const pattern of patterns) {
+      const match = stdout.match(pattern);
+      if (match && match[1] && match[1].match(/^\d+\.\d+\.\d+\.\d+$/)) {
+        console.log(`✅ Encontrado IPv4 via nslookup: ${match[1]}`);
+        return match[1];
+      }
     }
   } catch (error) {
+    console.warn(`⚠️ nslookup falhou: ${error.message}`);
     // Ignorar erro e tentar dig se disponível
     try {
-      const { stdout } = await execAsync(`dig +short ${hostname} A @8.8.8.8`, { timeout: 5000 });
-      const ipv4 = stdout.trim().split('\n')[0];
-      if (ipv4 && ipv4.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-        return ipv4;
+      console.log(`🔍 Executando: dig +short ${hostname} A @8.8.8.8`);
+      const { stdout } = await execAsync(`dig +short ${hostname} A @8.8.8.8`, { 
+        timeout: 10000,
+        maxBuffer: 1024 * 1024
+      });
+      console.log(`📝 dig stdout: ${stdout}`);
+      const lines = stdout.trim().split('\n').filter(line => line.trim());
+      for (const line of lines) {
+        const ipv4 = line.trim();
+        if (ipv4 && ipv4.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+          console.log(`✅ Encontrado IPv4 via dig: ${ipv4}`);
+          return ipv4;
+        }
       }
     } catch (error2) {
+      console.warn(`⚠️ dig também falhou: ${error2.message}`);
       // Ambos falharam
       throw new Error(`nslookup e dig falharam: ${error.message}`);
     }
@@ -229,22 +257,28 @@ async function createPool() {
     
     console.log(`🔍 Host original: ${dbHost}`);
     
-    // Tentar resolver hostname para IPv4, mas se falhar, usar hostname diretamente
-    // e confiar no monkey patch do net.createConnection para forçar IPv4
+    // CRÍTICO: Tentar resolver hostname para IPv4. Se falhar, LANÇAR ERRO
+    // Não podemos continuar sem IPv4 porque o Railway não suporta IPv6
     if (dbHost !== 'localhost' && !dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       console.log(`🔍 Hostname detectado (não é IP), tentando resolver para IPv4...`);
+      console.log(`🔍 Este é um passo CRÍTICO - sem IPv4, a conexão falhará!`);
+      
       const resolvedIp = await resolveToIPv4(dbHost);
       
       if (resolvedIp && resolvedIp.match(/^\d+\.\d+\.\d+\.\d+$/)) {
         dbHost = resolvedIp;
         ipv4Cache.set(originalHost, resolvedIp); // Cachear para o monkey patch
-        console.log(`✅ Hostname ${originalHost} resolvido para IPv4: ${dbHost}`);
+        console.log(`✅✅✅ SUCESSO! Hostname ${originalHost} resolvido para IPv4: ${dbHost}`);
         console.log(`✅ Validação IPv4 passou: ${dbHost}`);
       } else {
-        console.warn(`⚠️ Não foi possível resolver ${originalHost} para IPv4`);
-        console.warn(`⚠️ Usando hostname diretamente - monkey patch do net.createConnection tentará forçar IPv4...`);
-        // Manter hostname original - o monkey patch tentará resolver
-        dbHost = originalHost;
+        console.error(`❌❌❌ ERRO CRÍTICO: Não foi possível resolver ${originalHost} para IPv4`);
+        console.error(`❌ Todas as estratégias de resolução DNS falharam!`);
+        console.error(`❌ SOLUÇÃO ALTERNATIVA:`);
+        console.error(`   1. Descubra o IP IPv4 do Supabase manualmente:`);
+        console.error(`      nslookup db.iqcsixuzgktknuyuabfc.supabase.co 8.8.8.8`);
+        console.error(`   2. Configure DB_HOST diretamente com o IP IPv4 no Railway`);
+        console.error(`   3. Exemplo: DB_HOST=54.xxx.xxx.xxx (substitua pelo IP real)`);
+        throw new Error(`FALHA CRÍTICA: Não foi possível resolver ${originalHost} para IPv4. Configure DB_HOST com IP IPv4 diretamente no Railway.`);
       }
     } else if (dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       console.log(`✅ Host já é IPv4: ${dbHost}`);
