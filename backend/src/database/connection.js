@@ -335,13 +335,26 @@ async function createPool() {
       // PRIORIDADE 2: Tentar resolver DB_HOST para IPv4
       let dbHost = process.env.DB_HOST || 'localhost';
       const originalHost = dbHost;
+      const dbPort = parseInt(process.env.DB_PORT || '5432', 10);
       
       console.log(`🔍 Host original: ${dbHost}`);
+      console.log(`🔍 Porta configurada: ${dbPort}`);
       
-      // CRÍTICO: Tentar resolver hostname para IPv4. Se falhar, LANÇAR ERRO
-      // Não podemos continuar sem IPv4 porque o Railway não suporta IPv6
-      if (dbHost !== 'localhost' && !dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-        console.log(`🔍 Hostname detectado (não é IP), tentando resolver para IPv4...`);
+      // VERIFICAR SE É POOLER (usa IPv4 nativamente, não precisa resolver DNS)
+      const isPooler = dbPort === 6543 || 
+                       dbHost.includes('pooler') || 
+                       dbHost.includes('.pooler.supabase.com') ||
+                       process.env.DATABASE_URL?.includes('pooler') ||
+                       process.env.DATABASE_URL?.includes('pgbouncer=true');
+      
+      if (isPooler) {
+        console.log(`✅✅✅ POOLER DETECTADO! Usando Pooler do Supabase (IPv4 nativo)`);
+        console.log(`✅ Pooler já usa IPv4 nativamente - não precisa resolver DNS`);
+        console.log(`✅ Hostname será usado diretamente com family: 4`);
+        // Não precisa resolver DNS - Pooler já usa IPv4
+      } else if (dbHost !== 'localhost' && !dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+        // Apenas tentar resolver DNS se NÃO for Pooler
+        console.log(`🔍 Hostname detectado (não é IP e não é Pooler), tentando resolver para IPv4...`);
         console.log(`🔍 Este é um passo CRÍTICO - sem IPv4, a conexão falhará!`);
         
         const resolvedIp = await resolveToIPv4(dbHost);
@@ -354,29 +367,14 @@ async function createPool() {
         } else {
           console.error(`❌❌❌ ERRO CRÍTICO: Não foi possível resolver ${originalHost} para IPv4`);
           console.error(`❌ Todas as estratégias de resolução DNS falharam!`);
-          console.error(`❌ SOLUÇÃO ALTERNATIVA:`);
-          console.error(`   1. Descubra o IP IPv4 do Supabase manualmente:`);
-          console.error(`      nslookup db.iqcsixuzgktknuyuabfc.supabase.co 8.8.8.8`);
-          console.error(`   2. Configure DB_HOST_IP diretamente com o IP IPv4 no Railway`);
-          console.error(`   3. Exemplo: DB_HOST_IP=54.xxx.xxx.xxx (substitua pelo IP real)`);
-          console.error(`   4. Mantenha DB_HOST com o hostname original`);
-          console.error(`   5. O código usará DB_HOST_IP se estiver definido`);
-          throw new Error(`FALHA CRÍTICA: Não foi possível resolver ${originalHost} para IPv4. Configure DB_HOST_IP com IP IPv4 diretamente no Railway.`);
+          console.error(`❌ SOLUÇÃO: Use o Pooler do Supabase (porta 6543) ou configure DB_HOST_IP`);
+          throw new Error(`FALHA CRÍTICA: Não foi possível resolver ${originalHost} para IPv4. Use Pooler (porta 6543) ou configure DB_HOST_IP.`);
         }
       } else if (dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
         console.log(`✅ Host já é IPv4: ${dbHost}`);
         ipv4Cache.set(originalHost, dbHost); // Cachear mesmo sendo IP
       } else {
         console.log(`⚠️ Host é localhost, não precisa resolver`);
-      }
-      
-      // IMPORTANTE: Usar porta 5432 para conexão direta (suporta IPv4)
-      const dbPort = parseInt(process.env.DB_PORT || '5432', 10);
-      console.log(`🔍 Porta configurada: ${dbPort}`);
-      if (dbPort === 6543) {
-        console.warn('⚠️⚠️⚠️ ATENÇÃO: Porta 6543 detectada!');
-        console.warn('⚠️ Porta 6543 pode ter problemas com IPv4.');
-        console.warn('⚠️ Recomendado mudar para porta 5432 no Railway.');
       }
       
       dbConfig = {
