@@ -112,7 +112,7 @@ async function resolveToIPv4(hostname) {
     console.warn(`⚠️ [Estratégia 3] Falhou: ${error.message}`);
   }
   
-  // Estratégia 4: Tentar usar nslookup ou dig via child_process (último recurso)
+  // Estratégia 4: Tentar usar nslookup ou dig via child_process
   try {
     console.log(`🔍 [Estratégia 4] Tentando resolver via nslookup...`);
     const ipv4 = await resolveViaCommand(hostname);
@@ -123,6 +123,19 @@ async function resolveToIPv4(hostname) {
     }
   } catch (error) {
     console.warn(`⚠️ [Estratégia 4] Falhou: ${error.message}`);
+  }
+  
+  // Estratégia 5: Tentar usar API externa (último recurso)
+  try {
+    console.log(`🔍 [Estratégia 5] Tentando resolver via API externa...`);
+    const ipv4 = await resolveViaExternalAPI(hostname);
+    if (ipv4) {
+      console.log(`✅ [Estratégia 5] Resolvido ${hostname} para IPv4: ${ipv4}`);
+      ipv4Cache.set(hostname, ipv4);
+      return ipv4;
+    }
+  } catch (error) {
+    console.warn(`⚠️ [Estratégia 5] Falhou: ${error.message}`);
   }
   
   // Se todas as estratégias falharam, retornar null para usar fallback
@@ -182,6 +195,47 @@ async function resolveViaCommand(hostname) {
     }
   }
   return null;
+}
+
+// Função auxiliar para resolver via API externa
+async function resolveViaExternalAPI(hostname) {
+  try {
+    // Tentar usar API do Google DNS over HTTPS
+    const url = `https://dns.google/resolve?name=${hostname}&type=A`;
+    console.log(`🔍 Tentando resolver via Google DNS API: ${url}`);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      },
+      timeout: 10000
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    console.log(`📝 Resposta da API:`, JSON.stringify(data).substring(0, 200));
+    
+    if (data.Answer && Array.isArray(data.Answer)) {
+      for (const answer of data.Answer) {
+        if (answer.type === 1 && answer.data) { // Type 1 = A record
+          const ipv4 = answer.data.trim();
+          if (ipv4.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+            console.log(`✅ Encontrado IPv4 via API: ${ipv4}`);
+            return ipv4;
+          }
+        }
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.warn(`⚠️ Erro ao usar API externa: ${error.message}`);
+    throw error;
+  }
 }
 
 // Função para extrair hostname de DATABASE_URL e substituir por IPv4
