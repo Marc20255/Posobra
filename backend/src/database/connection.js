@@ -249,17 +249,44 @@ async function createPool() {
   
   // SEMPRE usar variáveis individuais para ter controle total sobre IPv4
   // DATABASE_URL pode causar problemas de resolução DNS no Railway
-  if (process.env.DB_HOST) {
+  if (process.env.DB_HOST || process.env.DB_HOST_IP) {
     console.log('📝 Usando variáveis individuais...');
-    // Usar variáveis individuais
-    let dbHost = process.env.DB_HOST || 'localhost';
-    const originalHost = dbHost;
     
-    console.log(`🔍 Host original: ${dbHost}`);
-    
-    // CRÍTICO: Tentar resolver hostname para IPv4. Se falhar, LANÇAR ERRO
-    // Não podemos continuar sem IPv4 porque o Railway não suporta IPv6
-    if (dbHost !== 'localhost' && !dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+    // PRIORIDADE 1: Se DB_HOST_IP está definido, usar diretamente (bypass DNS)
+    if (process.env.DB_HOST_IP && process.env.DB_HOST_IP.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      console.log(`✅✅✅ Usando DB_HOST_IP diretamente (bypass DNS): ${process.env.DB_HOST_IP}`);
+      const dbHost = process.env.DB_HOST_IP;
+      ipv4Cache.set(process.env.DB_HOST || 'supabase', dbHost);
+      
+      const dbPort = parseInt(process.env.DB_PORT || '5432', 10);
+      dbConfig = {
+        host: dbHost,
+        port: dbPort,
+        database: process.env.DB_NAME || 'pos_obra',
+        user: process.env.DB_USER || 'postgres',
+        password: process.env.DB_PASS || 'postgres',
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 0,
+        family: 4
+      };
+      
+      console.log(`🔍 Configuração final do Pool (via DB_HOST_IP):`);
+      console.log(`   Host: ${dbConfig.host} (IPv4 ✅)`);
+      console.log(`   Port: ${dbConfig.port}`);
+      console.log(`   Database: ${dbConfig.database}`);
+      console.log(`   User: ${dbConfig.user}`);
+      console.log(`   Family: ${dbConfig.family} (forçando IPv4)`);
+    } else {
+      // PRIORIDADE 2: Tentar resolver DB_HOST para IPv4
+      let dbHost = process.env.DB_HOST || 'localhost';
+      const originalHost = dbHost;
+      
+      console.log(`🔍 Host original: ${dbHost}`);
+      
+      // CRÍTICO: Tentar resolver hostname para IPv4. Se falhar, LANÇAR ERRO
+      // Não podemos continuar sem IPv4 porque o Railway não suporta IPv6
+      if (dbHost !== 'localhost' && !dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       console.log(`🔍 Hostname detectado (não é IP), tentando resolver para IPv4...`);
       console.log(`🔍 Este é um passo CRÍTICO - sem IPv4, a conexão falhará!`);
       
@@ -276,9 +303,11 @@ async function createPool() {
         console.error(`❌ SOLUÇÃO ALTERNATIVA:`);
         console.error(`   1. Descubra o IP IPv4 do Supabase manualmente:`);
         console.error(`      nslookup db.iqcsixuzgktknuyuabfc.supabase.co 8.8.8.8`);
-        console.error(`   2. Configure DB_HOST diretamente com o IP IPv4 no Railway`);
-        console.error(`   3. Exemplo: DB_HOST=54.xxx.xxx.xxx (substitua pelo IP real)`);
-        throw new Error(`FALHA CRÍTICA: Não foi possível resolver ${originalHost} para IPv4. Configure DB_HOST com IP IPv4 diretamente no Railway.`);
+        console.error(`   2. Configure DB_HOST_IP diretamente com o IP IPv4 no Railway`);
+        console.error(`   3. Exemplo: DB_HOST_IP=54.xxx.xxx.xxx (substitua pelo IP real)`);
+        console.error(`   4. Mantenha DB_HOST com o hostname original`);
+        console.error(`   5. O código usará DB_HOST_IP se estiver definido`);
+        throw new Error(`FALHA CRÍTICA: Não foi possível resolver ${originalHost} para IPv4. Configure DB_HOST_IP com IP IPv4 diretamente no Railway.`);
       }
     } else if (dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       console.log(`✅ Host já é IPv4: ${dbHost}`);
