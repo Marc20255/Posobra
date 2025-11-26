@@ -4,21 +4,49 @@ import dns from 'dns';
 import { promisify } from 'util';
 import net from 'net';
 import https from 'https';
+import { exec } from 'child_process';
+import { promisify as promisifyUtil } from 'util';
 
 dotenv.config();
 
 const { Pool } = pg;
 const lookup = promisify(dns.lookup);
 const resolve4 = promisify(dns.resolve4);
+const execAsync = promisifyUtil(exec);
 
-// Monkey patch para forçar IPv4 no net.createConnection
+// Cache de resoluções IPv4
+const ipv4Cache = new Map();
+
+// Monkey patch agressivo para forçar IPv4 no net.createConnection
 const originalCreateConnection = net.createConnection;
 net.createConnection = function(options, ...args) {
-  // Se for um objeto de opções com host, tentar resolver para IPv4
-  if (options && typeof options === 'object' && options.host && !options.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-    // Se não for IPv4, tentar resolver (mas isso é assíncrono, então não podemos fazer aqui)
-    // Por isso vamos garantir que sempre passamos IPv4 antes de chegar aqui
+  if (options && typeof options === 'object') {
+    // Se tem host e não é IPv4, tentar resolver
+    if (options.host && !options.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      // Verificar cache primeiro
+      if (ipv4Cache.has(options.host)) {
+        options.host = ipv4Cache.get(options.host);
+        console.log(`🔍 [net.createConnection] Usando IPv4 do cache: ${options.host}`);
+      } else {
+        // Tentar resolver síncrono (limitado, mas melhor que nada)
+        try {
+          // Usar dns.lookup síncrono como fallback
+          const result = dns.lookupSync(options.host, { family: 4 });
+          if (result && result.address) {
+            ipv4Cache.set(options.host, result.address);
+            options.host = result.address;
+            console.log(`🔍 [net.createConnection] Resolvido para IPv4: ${result.address}`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ [net.createConnection] Não conseguiu resolver ${options.host} para IPv4: ${error.message}`);
+        }
+      }
+    }
+    
+    // SEMPRE forçar family: 4
+    options.family = 4;
   }
+  
   return originalCreateConnection.call(this, options, ...args);
 };
 
@@ -84,38 +112,48 @@ async function resolveToIPv4(hostname) {
     console.warn(`⚠️ [Estratégia 3] Falhou: ${error.message}`);
   }
   
-  // Estratégia 4: Tentar resolver via serviço externo (último recurso)
+  // Estratégia 4: Tentar usar nslookup ou dig via child_process (último recurso)
   try {
-    console.log(`🔍 [Estratégia 4] Tentando resolver via serviço externo...`);
-    const ipv4 = await resolveViaExternalService(hostname);
+    console.log(`🔍 [Estratégia 4] Tentando resolver via nslookup...`);
+    const ipv4 = await resolveViaCommand(hostname);
     if (ipv4) {
       console.log(`✅ [Estratégia 4] Resolvido ${hostname} para IPv4: ${ipv4}`);
+      ipv4Cache.set(hostname, ipv4); // Cachear resultado
       return ipv4;
     }
   } catch (error) {
     console.warn(`⚠️ [Estratégia 4] Falhou: ${error.message}`);
   }
   
-  // Se todas as estratégias falharam, lançar erro
-  throw new Error(`Não foi possível resolver ${hostname} para IPv4 após tentar todas as estratégias`);
+  // Se todas as estratégias falharam, retornar null para usar fallback
+  console.warn(`⚠️ Não foi possível resolver ${hostname} para IPv4 após tentar todas as estratégias`);
+  console.warn(`⚠️ O código tentará usar o hostname diretamente com family: 4`);
+  return null; // Retornar null em vez de lançar erro
 }
 
-// Função auxiliar para resolver via serviço externo (último recurso)
-function resolveViaExternalService(hostname) {
-  return new Promise((resolve, reject) => {
-    // Usar Google DNS para resolver
-    const options = {
-      hostname: '8.8.8.8',
-      port: 53,
-      method: 'GET',
-      timeout: 5000
-    };
-    
-    // Na verdade, não podemos fazer query DNS direto via HTTP facilmente
-    // Vamos tentar usar dns.resolve4 com servidor DNS específico
-    // Mas isso requer configuração de sistema, então vamos apenas rejeitar
-    reject(new Error('Serviço externo não disponível'));
-  });
+// Função auxiliar para resolver via comando do sistema
+async function resolveViaCommand(hostname) {
+  try {
+    // Tentar usar nslookup (disponível na maioria dos sistemas)
+    const { stdout } = await execAsync(`nslookup -type=A ${hostname} 8.8.8.8`, { timeout: 5000 });
+    const match = stdout.match(/Address:\s*(\d+\.\d+\.\d+\.\d+)/);
+    if (match && match[1]) {
+      return match[1];
+    }
+  } catch (error) {
+    // Ignorar erro e tentar dig se disponível
+    try {
+      const { stdout } = await execAsync(`dig +short ${hostname} A @8.8.8.8`, { timeout: 5000 });
+      const ipv4 = stdout.trim().split('\n')[0];
+      if (ipv4 && ipv4.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+        return ipv4;
+      }
+    } catch (error2) {
+      // Ambos falharam
+      throw new Error(`nslookup e dig falharam: ${error.message}`);
+    }
+  }
+  return null;
 }
 
 // Função para extrair hostname de DATABASE_URL e substituir por IPv4
@@ -192,27 +230,25 @@ async function createPool() {
     console.log(`🔍 Host original: ${dbHost}`);
     
     // Tentar resolver hostname para IPv4, mas se falhar, usar hostname diretamente
-    // e confiar no pg para fazer a conexão correta
+    // e confiar no monkey patch do net.createConnection para forçar IPv4
     if (dbHost !== 'localhost' && !dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       console.log(`🔍 Hostname detectado (não é IP), tentando resolver para IPv4...`);
-      try {
-        dbHost = await resolveToIPv4(dbHost);
+      const resolvedIp = await resolveToIPv4(dbHost);
+      
+      if (resolvedIp && resolvedIp.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+        dbHost = resolvedIp;
+        ipv4Cache.set(originalHost, resolvedIp); // Cachear para o monkey patch
         console.log(`✅ Hostname ${originalHost} resolvido para IPv4: ${dbHost}`);
-        
-        // Verificar se realmente é IPv4
-        if (!dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-          console.error(`❌ Resolução retornou valor inválido: ${dbHost}`);
-          throw new Error(`Resolução não retornou IPv4 válido: ${dbHost}`);
-        }
         console.log(`✅ Validação IPv4 passou: ${dbHost}`);
-      } catch (error) {
-        console.warn(`⚠️ Não foi possível resolver ${originalHost} para IPv4: ${error.message}`);
-        console.warn(`⚠️ Usando hostname diretamente e forçando IPv4 via configuração do pg...`);
-        // Manter hostname original e confiar no pg com family: 4
+      } else {
+        console.warn(`⚠️ Não foi possível resolver ${originalHost} para IPv4`);
+        console.warn(`⚠️ Usando hostname diretamente - monkey patch do net.createConnection tentará forçar IPv4...`);
+        // Manter hostname original - o monkey patch tentará resolver
         dbHost = originalHost;
       }
     } else if (dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       console.log(`✅ Host já é IPv4: ${dbHost}`);
+      ipv4Cache.set(originalHost, dbHost); // Cachear mesmo sendo IP
     } else {
       console.log(`⚠️ Host é localhost, não precisa resolver`);
     }
