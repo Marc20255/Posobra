@@ -341,63 +341,64 @@ async function createPool() {
       // CRÍTICO: Tentar resolver hostname para IPv4. Se falhar, LANÇAR ERRO
       // Não podemos continuar sem IPv4 porque o Railway não suporta IPv6
       if (dbHost !== 'localhost' && !dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-      console.log(`🔍 Hostname detectado (não é IP), tentando resolver para IPv4...`);
-      console.log(`🔍 Este é um passo CRÍTICO - sem IPv4, a conexão falhará!`);
-      
-      const resolvedIp = await resolveToIPv4(dbHost);
-      
-      if (resolvedIp && resolvedIp.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-        dbHost = resolvedIp;
-        ipv4Cache.set(originalHost, resolvedIp); // Cachear para o monkey patch
-        console.log(`✅✅✅ SUCESSO! Hostname ${originalHost} resolvido para IPv4: ${dbHost}`);
-        console.log(`✅ Validação IPv4 passou: ${dbHost}`);
+        console.log(`🔍 Hostname detectado (não é IP), tentando resolver para IPv4...`);
+        console.log(`🔍 Este é um passo CRÍTICO - sem IPv4, a conexão falhará!`);
+        
+        const resolvedIp = await resolveToIPv4(dbHost);
+        
+        if (resolvedIp && resolvedIp.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+          dbHost = resolvedIp;
+          ipv4Cache.set(originalHost, resolvedIp); // Cachear para o monkey patch
+          console.log(`✅✅✅ SUCESSO! Hostname ${originalHost} resolvido para IPv4: ${dbHost}`);
+          console.log(`✅ Validação IPv4 passou: ${dbHost}`);
+        } else {
+          console.error(`❌❌❌ ERRO CRÍTICO: Não foi possível resolver ${originalHost} para IPv4`);
+          console.error(`❌ Todas as estratégias de resolução DNS falharam!`);
+          console.error(`❌ SOLUÇÃO ALTERNATIVA:`);
+          console.error(`   1. Descubra o IP IPv4 do Supabase manualmente:`);
+          console.error(`      nslookup db.iqcsixuzgktknuyuabfc.supabase.co 8.8.8.8`);
+          console.error(`   2. Configure DB_HOST_IP diretamente com o IP IPv4 no Railway`);
+          console.error(`   3. Exemplo: DB_HOST_IP=54.xxx.xxx.xxx (substitua pelo IP real)`);
+          console.error(`   4. Mantenha DB_HOST com o hostname original`);
+          console.error(`   5. O código usará DB_HOST_IP se estiver definido`);
+          throw new Error(`FALHA CRÍTICA: Não foi possível resolver ${originalHost} para IPv4. Configure DB_HOST_IP com IP IPv4 diretamente no Railway.`);
+        }
+      } else if (dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+        console.log(`✅ Host já é IPv4: ${dbHost}`);
+        ipv4Cache.set(originalHost, dbHost); // Cachear mesmo sendo IP
       } else {
-        console.error(`❌❌❌ ERRO CRÍTICO: Não foi possível resolver ${originalHost} para IPv4`);
-        console.error(`❌ Todas as estratégias de resolução DNS falharam!`);
-        console.error(`❌ SOLUÇÃO ALTERNATIVA:`);
-        console.error(`   1. Descubra o IP IPv4 do Supabase manualmente:`);
-        console.error(`      nslookup db.iqcsixuzgktknuyuabfc.supabase.co 8.8.8.8`);
-        console.error(`   2. Configure DB_HOST_IP diretamente com o IP IPv4 no Railway`);
-        console.error(`   3. Exemplo: DB_HOST_IP=54.xxx.xxx.xxx (substitua pelo IP real)`);
-        console.error(`   4. Mantenha DB_HOST com o hostname original`);
-        console.error(`   5. O código usará DB_HOST_IP se estiver definido`);
-        throw new Error(`FALHA CRÍTICA: Não foi possível resolver ${originalHost} para IPv4. Configure DB_HOST_IP com IP IPv4 diretamente no Railway.`);
+        console.log(`⚠️ Host é localhost, não precisa resolver`);
       }
-    } else if (dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-      console.log(`✅ Host já é IPv4: ${dbHost}`);
-      ipv4Cache.set(originalHost, dbHost); // Cachear mesmo sendo IP
-    } else {
-      console.log(`⚠️ Host é localhost, não precisa resolver`);
+      
+      // IMPORTANTE: Usar porta 5432 para conexão direta (suporta IPv4)
+      const dbPort = parseInt(process.env.DB_PORT || '5432', 10);
+      console.log(`🔍 Porta configurada: ${dbPort}`);
+      if (dbPort === 6543) {
+        console.warn('⚠️⚠️⚠️ ATENÇÃO: Porta 6543 detectada!');
+        console.warn('⚠️ Porta 6543 pode ter problemas com IPv4.');
+        console.warn('⚠️ Recomendado mudar para porta 5432 no Railway.');
+      }
+      
+      dbConfig = {
+        host: dbHost,
+        port: dbPort,
+        database: process.env.DB_NAME || 'pos_obra',
+        user: process.env.DB_USER || 'postgres',
+        password: process.env.DB_PASS || 'postgres',
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 0,
+        // Forçar IPv4 no nível do pg
+        family: 4
+      };
+      
+      console.log(`🔍 Configuração final do Pool:`);
+      console.log(`   Host: ${dbConfig.host} ${dbConfig.host.match(/^\d+\.\d+\.\d+\.\d+$/) ? '(IPv4 ✅)' : '(hostname - será resolvido com family: 4)'}`);
+      console.log(`   Port: ${dbConfig.port}`);
+      console.log(`   Database: ${dbConfig.database}`);
+      console.log(`   User: ${dbConfig.user}`);
+      console.log(`   Family: ${dbConfig.family} (forçando IPv4)`);
     }
-    
-    // IMPORTANTE: Usar porta 5432 para conexão direta (suporta IPv4)
-    const dbPort = parseInt(process.env.DB_PORT || '5432', 10);
-    console.log(`🔍 Porta configurada: ${dbPort}`);
-    if (dbPort === 6543) {
-      console.warn('⚠️⚠️⚠️ ATENÇÃO: Porta 6543 detectada!');
-      console.warn('⚠️ Porta 6543 pode ter problemas com IPv4.');
-      console.warn('⚠️ Recomendado mudar para porta 5432 no Railway.');
-    }
-    
-    dbConfig = {
-      host: dbHost,
-      port: dbPort,
-      database: process.env.DB_NAME || 'pos_obra',
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASS || 'postgres',
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 0,
-      // Forçar IPv4 no nível do pg
-      family: 4
-    };
-    
-    console.log(`🔍 Configuração final do Pool:`);
-    console.log(`   Host: ${dbConfig.host} ${dbConfig.host.match(/^\d+\.\d+\.\d+\.\d+$/) ? '(IPv4 ✅)' : '(hostname - será resolvido com family: 4)'}`);
-    console.log(`   Port: ${dbConfig.port}`);
-    console.log(`   Database: ${dbConfig.database}`);
-    console.log(`   User: ${dbConfig.user}`);
-    console.log(`   Family: ${dbConfig.family} (forçando IPv4)`);
   } else {
     throw new Error('DB_HOST não está definido. Configure DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS no Railway.');
   }
