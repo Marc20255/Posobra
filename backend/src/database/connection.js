@@ -17,34 +17,51 @@ const execAsync = promisifyUtil(exec);
 // Cache de resoluções IPv4
 const ipv4Cache = new Map();
 
-// Monkey patch agressivo para forçar IPv4 no net.createConnection
+// Monkey patch ULTRA agressivo para forçar IPv4 no net.createConnection
 const originalCreateConnection = net.createConnection;
 net.createConnection = function(options, ...args) {
   if (options && typeof options === 'object') {
-    // Se tem host e não é IPv4, tentar resolver
-    if (options.host && !options.host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+    const originalHost = options.host;
+    
+    // Se tem host e não é IPv4, tentar resolver AGressivamente
+    if (originalHost && !originalHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
       // Verificar cache primeiro
-      if (ipv4Cache.has(options.host)) {
-        options.host = ipv4Cache.get(options.host);
+      if (ipv4Cache.has(originalHost)) {
+        options.host = ipv4Cache.get(originalHost);
         console.log(`🔍 [net.createConnection] Usando IPv4 do cache: ${options.host}`);
       } else {
-        // Tentar resolver síncrono (limitado, mas melhor que nada)
+        // Tentar resolver síncrono com múltiplas estratégias
+        let resolved = false;
+        
+        // Estratégia 1: dns.lookupSync com family: 4
         try {
-          // Usar dns.lookup síncrono como fallback
-          const result = dns.lookupSync(options.host, { family: 4 });
-          if (result && result.address) {
-            ipv4Cache.set(options.host, result.address);
+          const result = dns.lookupSync(originalHost, { family: 4 });
+          if (result && result.address && result.address.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+            ipv4Cache.set(originalHost, result.address);
             options.host = result.address;
-            console.log(`🔍 [net.createConnection] Resolvido para IPv4: ${result.address}`);
+            console.log(`✅ [net.createConnection] Resolvido para IPv4 (sync): ${result.address}`);
+            resolved = true;
           }
         } catch (error) {
-          console.warn(`⚠️ [net.createConnection] Não conseguiu resolver ${options.host} para IPv4: ${error.message}`);
+          // Ignorar e tentar próxima estratégia
+        }
+        
+        // Estratégia 2: Se é Supabase e não resolveu, usar Pooler
+        if (!resolved && originalHost.includes('supabase.co') && options.port === 5432) {
+          console.warn(`⚠️ [net.createConnection] Host Supabase na porta 5432 - recomendado usar Pooler (6543)`);
+          console.warn(`⚠️ Tentando forçar IPv4 mesmo assim...`);
         }
       }
     }
     
-    // SEMPRE forçar family: 4
+    // SEMPRE forçar family: 4 - CRÍTICO
     options.family = 4;
+    
+    // Log para debug
+    if (originalHost && originalHost !== options.host) {
+      console.log(`🔍 [net.createConnection] Host alterado: ${originalHost} → ${options.host}`);
+    }
+    console.log(`🔍 [net.createConnection] Family forçado: ${options.family}`);
   }
   
   return originalCreateConnection.call(this, options, ...args);
@@ -352,6 +369,27 @@ async function createPool() {
         console.log(`✅ Pooler já usa IPv4 nativamente - não precisa resolver DNS`);
         console.log(`✅ Hostname será usado diretamente com family: 4`);
         // Não precisa resolver DNS - Pooler já usa IPv4
+      } else if (dbHost.includes('supabase.co') && dbPort === 5432) {
+        // Se é Supabase na porta 5432, AVISAR mas tentar mesmo assim
+        console.warn(`⚠️⚠️⚠️ ATENÇÃO: Usando Supabase na porta 5432 (Direct Connection)`);
+        console.warn(`⚠️ Direct Connection não é compatível com IPv4 no Railway!`);
+        console.warn(`⚠️ RECOMENDADO: Use Pooler (porta 6543) ou configure DB_HOST_IP`);
+        console.warn(`⚠️ Tentando conectar mesmo assim com family: 4...`);
+        // Tentar resolver DNS, mas se falhar, deixar o monkey patch tentar
+        try {
+          const resolvedIp = await resolveToIPv4(dbHost);
+          if (resolvedIp && resolvedIp.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+            dbHost = resolvedIp;
+            ipv4Cache.set(originalHost, resolvedIp);
+            console.log(`✅ Resolvido para IPv4: ${resolvedIp}`);
+          } else {
+            console.warn(`⚠️ Não foi possível resolver DNS, mas tentando mesmo assim...`);
+            console.warn(`⚠️ O monkey patch do net.createConnection tentará forçar IPv4`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Erro ao resolver DNS: ${error.message}`);
+          console.warn(`⚠️ Tentando conectar mesmo assim - monkey patch tentará forçar IPv4`);
+        }
       } else if (dbHost !== 'localhost' && !dbHost.match(/^\d+\.\d+\.\d+\.\d+$/)) {
         // Apenas tentar resolver DNS se NÃO for Pooler
         console.log(`🔍 Hostname detectado (não é IP e não é Pooler), tentando resolver para IPv4...`);
