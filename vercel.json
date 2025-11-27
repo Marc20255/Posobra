@@ -1,8 +1,16 @@
 {
-  "buildCommand": "cd frontend-web && npm run build",
-  "outputDirectory": "frontend-web/.next",
-  "installCommand": "cd frontend-web && npm install",
-  "framework": "nextjs",
-  "rootDirectory": "frontend-web"
+  "version": 2,
+  "builds": [
+    {
+      "src": "frontend-web/package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "frontend-web/$1"
+    }
+  ]
 }
 
