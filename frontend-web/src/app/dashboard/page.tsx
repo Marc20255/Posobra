@@ -84,7 +84,8 @@ export default function DashboardPage() {
 
   const hasUnits = unitsData?.data && unitsData.data.length > 0
 
-  const services: Service[] = servicesData?.data || []
+  // Memoizar services para evitar recriação a cada renderização
+  const services: Service[] = useMemo(() => servicesData?.data || [], [servicesData?.data])
   
   // Memoizar cálculos pesados
   const stats = useMemo(() => ({
