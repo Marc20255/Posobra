@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import { useQuery } from '@tanstack/react-query'
 import { TechnicianCardSkeleton } from '@/components/ui/skeleton'
 import { Star, MapPin, Briefcase, Tag, X } from 'lucide-react'
 
-export default function TechniciansPage() {
+function TechniciansContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [user, setUser] = useState<any>(null)
@@ -222,3 +222,11 @@ export default function TechniciansPage() {
   )
 }
 
+
+export default function TechniciansPage() {
+  return (
+    <Suspense fallback={null}>
+      <TechniciansContent />
+    </Suspense>
+  )
+}
